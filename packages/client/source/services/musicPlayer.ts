@@ -1,10 +1,11 @@
 import got from 'got';
-import Speaker from 'speaker';
+import { spawn, ChildProcess } from 'child_process';
 import { SongInfo } from '../types.js';
 import { baseUrl } from '../baseUrl.js';
 
 export class MusicPlayerService {
-    private speaker: any;
+    private speaker: NodeJS.WritableStream | null = null;
+    private playerProcess: ChildProcess | null = null;
     private onProgressUpdate: ((elapsed: number) => void) | null = null;
     private progressInterval: NodeJS.Timeout | null = null;
     private startTime: number = 0;
@@ -15,11 +16,21 @@ export class MusicPlayerService {
     private pausedElapsed: number = 0;
 
     async checkDependencies(): Promise<string[]> {
-        return [];
+        return new Promise((resolve) => {
+            const ffplay = spawn('ffplay', ['-version']);
+            ffplay.on('error', () => resolve(['ffplay']));
+            ffplay.on('close', (code) => code === 0 ? resolve([]) : resolve(['ffplay']));
+        });
     }
 
-    // @ts-ignore
     getInstallInstructions(missing: string[]): string {
+        if (missing.includes('ffplay')) {
+            switch (process.platform) {
+                case 'darwin': return '\nFFmpeg is missing! Install with: brew install ffmpeg\n';
+                case 'win32': return '\nFFmpeg is missing! Download from https://ffmpeg.org/download.html and add it to your PATH.\n';
+                default: return '\nFFmpeg is missing! Install with: sudo apt install ffmpeg (or use your package manager)\n';
+            }
+        }
         return '';
     }
 
@@ -72,23 +83,36 @@ export class MusicPlayerService {
             this.currentStream = stream;
             this.pausedElapsed = 0;
 
-            this.speaker = new Speaker({
-                channels: 2,
-                bitDepth: 16,
-                sampleRate: 44100
-            });
+            this.playerProcess = spawn('ffplay', [
+                '-i', 'pipe:0',
+                '-nodisp',
+                '-autoexit',
+                '-loglevel', 'quiet'
+            ]);
+            
+            this.speaker = this.playerProcess.stdin;
 
             stream.on('error', (err: Error) => {
                 if (this.progressInterval) clearInterval(this.progressInterval);
                 reject(err);
             });
 
-            this.speaker.on('close', () => {
+            this.playerProcess.on('error', (err: Error) => {
+                if (err.message.includes('ENOENT')) {
+                    console.error('\n❌ ffplay not found! Please ensure FFmpeg is installed and added to PATH.\n');
+                }
+                if (this.progressInterval) clearInterval(this.progressInterval);
+                reject(err);
+            });
+
+            this.playerProcess.on('close', () => {
                 if (this.progressInterval) clearInterval(this.progressInterval);
                 resolve();
             });
 
-            stream.pipe(this.speaker);
+            if (this.speaker) {
+                stream.pipe(this.speaker as any);
+            }
 
             if (this.onProgressUpdate) {
                 this.progressInterval = setInterval(() => {
@@ -141,11 +165,14 @@ export class MusicPlayerService {
             this.startTime = Date.now();
             this.duration = this.parseDuration(songInfo.duration);
 
-            this.speaker = new Speaker({
-                channels: 2,
-                bitDepth: 16,
-                sampleRate: 44100
-            });
+            this.playerProcess = spawn('ffplay', [
+                '-i', 'pipe:0',
+                '-nodisp',
+                '-autoexit',
+                '-loglevel', 'quiet'
+            ]);
+            
+            this.speaker = this.playerProcess.stdin;
 
             const stream = got.stream(songInfo.url);
 
@@ -154,12 +181,19 @@ export class MusicPlayerService {
                 reject(err);
             });
 
-            this.speaker.on('close', () => {
+            this.playerProcess.on('error', (err: Error) => {
+                if (this.progressInterval) clearInterval(this.progressInterval);
+                reject(err);
+            });
+
+            this.playerProcess.on('close', () => {
                 if (this.progressInterval) clearInterval(this.progressInterval);
                 resolve();
             });
 
-            stream.pipe(this.speaker);
+            if (this.speaker) {
+                stream.pipe(this.speaker as any);
+            }
 
             if (this.onProgressUpdate) {
                 this.progressInterval = setInterval(() => {
@@ -173,9 +207,14 @@ export class MusicPlayerService {
     }
 
     cleanup() {
-        if (this.speaker) {
-            this.speaker.destroy();
+        if (this.playerProcess) {
+            this.playerProcess.kill('SIGKILL');
+            this.playerProcess = null;
         }
+        if (this.speaker && (this.speaker as any).destroy) {
+            (this.speaker as any).destroy();
+        }
+        this.speaker = null;
         if (this.progressInterval) {
             clearInterval(this.progressInterval);
         }

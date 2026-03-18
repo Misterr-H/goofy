@@ -75,7 +75,6 @@ if [ ! -f "packages/backend/.env" ]; then
         echo -e "${RED}❌ .env.example not found. Please create packages/backend/.env manually${NC}"
         echo "Required variables:"
         echo "  REDIS_URL=redis://localhost:6379"
-        echo "  POSTHOG_API_KEY=your_posthog_api_key_here"
         exit 1
     fi
 fi

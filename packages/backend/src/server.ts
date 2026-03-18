@@ -1,18 +1,10 @@
 import express from 'express';
 import { spawn } from 'child_process';
 import { once } from 'events';
-import { PostHog } from 'posthog-node'
 import dotenv from 'dotenv';
 import { createClient } from 'redis';
 
 dotenv.config();
-
-const client = new PostHog(
-    process.env.POSTHOG_API_KEY!,
-    {
-        host: 'https://us.i.posthog.com'
-    }
-)
 
 const app = express();
 
@@ -184,13 +176,6 @@ function sanitizeHeaderValue(value: string | number | undefined): string {
 
 app.get('/metadata', async (req, res) => {
     const query = req.query.q as string;
-    client.capture({
-        distinctId: '123',
-        event: 'metadata_requested',
-        properties: {
-            query: query
-        }
-    });
     if (!query) return res.status(400).json({ error: 'Missing query' });
     try {
         const info = await getSongInfo(query);
@@ -300,13 +285,6 @@ app.get('/health', (req, res) => {
 
 app.get('/stream', async (req, res) => {
     const query = req.query.q as string;
-    client.capture({
-        distinctId: '123',
-        event: 'stream_requested',
-        properties: {
-            query: query
-        }
-    });
 
     if (!query) {
         return res.status(400).json({ error: 'Missing query parameter' });
